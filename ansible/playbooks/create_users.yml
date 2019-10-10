@@ -1,0 +1,108 @@
+---
+- name: Ceate users
+  hosts: testserver
+  become: true
+  vars:
+    filedir: /opt/filedir
+    group_name: custom
+    reportfile: /tmp/users.txt
+    mail_user: docdoc@legkovalex.ru
+    # mail_password: 
+    mail_server: smtp.yandex.ru
+    mail_port: 587
+    mail_recipient: legkovalex@gmail.com
+
+  tasks:
+    - name: Search for files
+      block:
+      - name: Find files
+        shell: find . -type f -exec basename \{} \;
+        args:
+          chdir: '{{ filedir }}'
+        register: userfiles
+      rescue: 
+        - fail:
+            msg: "Files in {{ filedir }} not found. Exit."
+
+
+    - name: Create group 
+      block:
+      - name: Create group
+        group:
+          name: "{{ group_name }}"
+          state: present
+      - name: Add group to sudo
+        copy:
+          content: |
+            %{{ group_name }} ALL=(ALL) NOPASSWD: /opt/script.sh
+          dest: "/etc/sudoers.d/{{ group_name }}"
+          owner: root
+          group: root
+          mode: '440'
+      - name: Disable ssh for group
+        lineinfile:
+          path: /etc/ssh/sshd_config
+          regexp: '^DenyGroups '
+          line: "DenyGroups {{ group_name }}"
+        notify: restart sshd
+      always:
+        - debug:
+            msg: Group {{ group_name }} with sudo settings was created
+
+    - name: Confiure users
+      block:
+      - name: Create users
+        user:
+          name: "{{ item }}"
+          shell: /bin/bash
+          state: present
+          comment: 'User created by Ansible'
+          groups: "sudo,{{ group_name }}"
+        with_items: "{{ userfiles.stdout_lines }}"
+      - name: Disable crontab
+        file:
+          path: "/var/spool/cron/crontabs/{{ item }}"
+          owner: root
+          group: root
+          mode: '0400'
+          state: touch
+        with_items: "{{ userfiles.stdout_lines }}"
+      always:
+        - debug:
+            msg: Users was created with disabled crontab
+
+    - name: Send report
+      block:
+        - name: Create report file
+          copy:
+            content: |
+              Users creation report for group "{{ group_name }}":
+            dest: "{{ reportfile }}"
+            owner: root
+            group: root
+            mode: '440'
+        - name: Add users into report file
+          lineinfile:
+            path: "{{ reportfile }}"
+            line: User "{{ item }}" added
+          with_items: "{{ userfiles.stdout_lines }}"
+        - name: Sending mail
+          mail:
+            host: "{{ mail_server }}"
+            port: "{{ mail_port }}"
+            password: "{{ mail_password }}"
+            username: "{{ mail_user }}"
+            from: "{{ mail_user }}"
+            to: "{{ mail_recipient }}"
+            subject: Ansible report
+            body: All users is successfully created on server {{ ansible_hostname }}. See attachment.
+            attach: "{{ reportfile }}"
+      when: mail_password is defined
+      always:
+        - debug:
+            msg: Report sent
+
+
+  handlers:
+    - name: restart sshd
+      service: name=sshd state=restarted

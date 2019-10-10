@@ -1,0 +1,35 @@
+---
+- name: Prepare server
+  hosts: testserver
+  become: true
+  vars:
+    filedir: /opt/filedir
+  tasks:
+    - name: create dir for files
+      file:
+        path: "{{ filedir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create some files
+      file:
+        path: '{{ filedir }}/{{ item }}'
+        owner: root
+        group: root
+        mode: '0644'
+        state: touch
+      with_items:
+        - ivanov
+        - petrov
+        - sidorov
+
+    - name: Create file
+      copy:
+        content: |
+          /bin/echo "Hello World!"
+        dest: /opt/script.sh 
+        owner: root
+        group: root
+        mode: '700'
